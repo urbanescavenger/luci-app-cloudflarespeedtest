@@ -218,6 +218,20 @@ function first_result_ip(){
     sed -n '2,$p' "$1" 2>/dev/null | grep -v '^#' | awk -F, 'NF >= 7 && $1 != "" { print $1; exit }'
 }
 
+# 按「下载速度(第6列)降序、平均延迟(第5列)升序」排序结果数据行，表头保留在首行。
+# 兼容测速被中断、二进制未完成最终排序的情况，保证最快 IP 位于首行。
+function sort_result(){
+    local file="$1"
+    [ -s "$file" ] || return 0
+    local header
+    header=$(sed -n '1p' "$file" 2>/dev/null)
+    {
+        [ -n "$header" ] && echo "$header"
+        sed '1d' "$file" 2>/dev/null | grep -v '^#' | LC_ALL=C sort -t, -k6,6rn -k5,5n 2>/dev/null
+    } > "${file}.sorted" 2>/dev/null
+    [ -s "${file}.sorted" ] && mv -f "${file}.sorted" "$file" || rm -f "${file}.sorted"
+}
+
 function select_ip_file(){
     case "${ip_source:-}" in
         builtin_ipv4)
@@ -379,9 +393,7 @@ function speed_test(){
     echolog "-----------end------------"
 
     if [ $command_rc -ne 0 ]; then
-        echolog "CloudflareST 测速失败，保留上一次结果"
-        rm -f "$result_tmp"
-        return $command_rc
+        echolog "CloudflareST 测速被中断或异常退出（返回码 $command_rc），尝试保存已获取的结果"
     fi
 
     if [ -z "$(first_result_ip "$result_tmp")" ]; then
@@ -389,6 +401,9 @@ function speed_test(){
         rm -f "$result_tmp"
         return 1
     fi
+
+    # 对结果按下载速度降序排序（兼容被中断时未完成排序的情况），保证最快 IP 位于首行。
+    sort_result "$result_tmp"
 
     # Append current time to the validated result, then rotate old results.
     echo "# Speed test time: $(date +'%Y-%m-%d %H:%M:%S')" >> "$result_tmp"

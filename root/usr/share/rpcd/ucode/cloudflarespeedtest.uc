@@ -114,7 +114,10 @@ function start() {
 }
 
 function stop() {
-	command('pgrep cdnspeedtest | xargs kill -9 >/dev/null 2>&1');
+	// SIGINT 让 cdnspeedtest 把已测速的部分结果写入 -o 临时文件后再退出
+	command('pgrep cdnspeedtest | xargs kill -INT >/dev/null 2>&1');
+	// 留 3 秒 flush，仍未退出则强杀兜底（避免卡死）
+	command('( sleep 3; pgrep cdnspeedtest | xargs kill -9 >/dev/null 2>&1 ) >/dev/null 2>&1 &');
 
 	return {};
 }
