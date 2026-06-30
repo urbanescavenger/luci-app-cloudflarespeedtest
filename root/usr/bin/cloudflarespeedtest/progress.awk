@@ -1,14 +1,21 @@
-# progress.awk - filter CloudflareSpeedTest (cdnspeedtest) stdout into a
+# progress.awk - filter CloudflareSpeedTest (cdnspeedtest, v2.3.4) stdout into a
 # clean, throttled speed-test log with overall progress.
 #
-# The core tool refreshes its "[n/total]" progress in place using carriage
-# returns (\r). When that is captured to a file the progress is unreadable, and
-# the rpcd log reader strips the bracketed numbers entirely. This filter:
-#   * splits the \r-overwritten progress into discrete lines (fed via `tr`),
-#   * collapses the high-frequency "[n/total]" spam into throttled
-#     "进度: <phase> <tested>/<total> (<pct>%)" lines (~every 1% by default),
-#   * passes through every other line (phase markers, summaries, results)
-#     verbatim, so no detail is lost.
+# The core tool (cheggaaa/pb v3 progress bar) refreshes each progress line in
+# place with \r, shaped like:
+#     <current> / <total> [----↖_____] 可用: <count>     (latency phase)
+#     <current> / <total> [----↖_____]                  (download phase)
+# i.e. the "current / total" counters have NO brackets, and the "[...]" is the
+# graphical bar (arrows/dashes), not the numbers. The rpcd log reader strips the
+# "[...]" bar but leaves the \r-mangled counters unreadable.
+#
+# Fed via `tr "\r" "\n"`, this filter:
+#   * detects progress lines (start with "n / total" counters AND contain a "["
+#     bar) and collapses the high-frequency refresh spam into throttled
+#     "进度: <phase> <tested>/<total> (<pct>%)" lines (~every 1%),
+#   * tracks the phase via the "开始延迟测速" / "开始下载测速" markers (and the
+#     "可用:" hint),
+#   * passes through every other line (markers, summaries, CSV results) verbatim.
 #
 # Usage:  ... | tr "\r" "\n" | awk -f /usr/bin/cloudflarespeedtest/progress.awk
 
@@ -21,24 +28,32 @@ BEGIN {
     phase = "测速"
 }
 
-# blank lines (e.g. produced by leading \r after the tr conversion) are noise
+# blank lines (e.g. from leading \r after the tr conversion) are noise
 /^$/ {
     next
 }
 
-# progress line: contains a "[tested/total]" token
-match($0, /\[[0-9]+\/[0-9]+\]/) {
-    bracket = substr($0, RSTART, RLENGTH)
-    inner = substr(bracket, 2, length(bracket) - 2)
-    split(inner, parts, "/")
+# phase markers: pass through, but remember which phase we are in
+/开始延迟测速/ {
+    phase = "延迟测速"
+    print
+    next
+}
+/开始下载测速/ {
+    phase = "下载测速"
+    print
+    next
+}
+
+# progress line: starts with "current / total" counters and contains a "[" bar
+match($0, /^ *[0-9]+ *\/ *[0-9]+/) && index($0, "[") > 0 {
+    token = substr($0, RSTART, RLENGTH)
+    split(token, parts, "/")
     tested = parts[1] + 0
     total = parts[2] + 0
 
-    # detect the current phase by keyword; keep the previous label if the line
-    # has no recognizable keyword (so a mangled line never resets the label)
-    if (index($0, "下载") > 0)
-        phase = "下载测速"
-    else if (index($0, "延迟") > 0)
+    # latency progress carries a "可用:" counter; use it as a phase hint too
+    if (index($0, "可用") > 0)
         phase = "延迟测速"
 
     # recompute the throttle step whenever the total changes (new phase)
@@ -61,8 +76,7 @@ match($0, /\[[0-9]+\/[0-9]+\]/) {
     next
 }
 
-# any other line: pass through verbatim (flushed on the next progress print or
-# when the pipe closes, so normal output is never lost)
+# any other line: pass through verbatim
 {
     print
 }
