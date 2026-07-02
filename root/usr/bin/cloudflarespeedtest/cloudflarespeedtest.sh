@@ -753,11 +753,14 @@ function ip_replace(){
         mosdns_ip
         astra_dns_ip
         alidns_ip
-        ssr_best_ip
-        vssr_best_ip
-        bypass_best_ip
-        passwall_best_ip
-        passwall2_best_ip
+        # 走节点测速模式下,bestip 只对 node_test_node 最优,不写其它代理节点(它们是别的节点,该 IP 没替它们测过)
+        if [ "${node_test:-0}" != "1" ]; then
+            ssr_best_ip
+            vssr_best_ip
+            bypass_best_ip
+            passwall_best_ip
+            passwall2_best_ip
+        fi
 
     fi
 
